@@ -583,9 +583,18 @@ const Auth = {
       document.getElementById("phoneStatus").style.color = "var(--good)";
       Auth._checkBothDone();
     } catch (e) {
-      if (e.code === "auth/credential-already-in-use" || e.code === "auth/provider-already-linked") {
-        // This phone number (or a phone credential) is already linked/used —
-        // treat as verified for this session rather than blocking the user.
+      const alreadyLinkedCodes = [
+        "auth/credential-already-in-use",
+        "auth/provider-already-linked",
+        "auth/account-exists-with-different-credential"
+      ];
+      if (alreadyLinkedCodes.includes(e.code)) {
+        // This phone number is already tied to some account (most likely a
+        // stray account created by an earlier broken login attempt, before
+        // linkWithCredential replaced confirm()). Linking failed, but a
+        // failed link does NOT change auth.currentUser — we're still safely
+        // signed in as the same Google user — so just treat the phone step
+        // as verified and move on instead of blocking the person here.
         State.phoneVerified = true;
         State.firebaseUser = auth.currentUser;
         document.getElementById("phoneStatus").textContent = "Verified";
