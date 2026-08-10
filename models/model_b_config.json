@@ -1,0 +1,31 @@
+{
+  "threshold": 0.7890231609344482,
+  "features": [
+    "account_age_days",
+    "total_transactions_user",
+    "avg_amount_user",
+    "amount",
+    "promo_used",
+    "avs_match",
+    "cvv_result",
+    "three_ds_flag",
+    "country_mismatch",
+    "shipping_distance_km",
+    "channel_enc",
+    "merchant_category_enc"
+  ],
+  "f1_score": 0.8270806382061233,
+  "roc_auc": 0.9762877008214168,
+  "pr_auc": 0.8565367198092286,
+  "channel_categories": [
+    "app",
+    "web"
+  ],
+  "merchant_category_categories": [
+    "electronics",
+    "fashion",
+    "gaming",
+    "grocery",
+    "travel"
+  ]
+}
