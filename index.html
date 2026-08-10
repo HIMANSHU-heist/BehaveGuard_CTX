@@ -385,7 +385,8 @@
 import { initializeApp } from "firebase/app";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
-  RecaptchaVerifier, signInWithPhoneNumber, signOut, onAuthStateChanged
+  RecaptchaVerifier, signInWithPhoneNumber, signOut, onAuthStateChanged,
+  linkWithCredential, PhoneAuthProvider
 } from "firebase/auth";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, collection,
@@ -409,8 +410,8 @@ const firebaseConfig = {
   appId: "1:119017141733:web:d1725da1f359b8ada72b0c"
 };
 
-const DEBUG_MODE = false; // flip to true only for local/demo builds — keep false when deployed
-const STARTING_BALANCE = 10000; // ₹, single named constant per spec
+const DEBUG_MODE = true; // flip to false for a clean production/demo build — true so you can test transactions via #/debug (override device/GPS/SIM/OTP signals, see raw model outputs)
+const STARTING_BALANCE = 5000; // ₹, single named constant per spec
 const LOCATION_THRESHOLD_KM = 25; // CTX S2 distance threshold
 
 const fbApp = initializeApp(firebaseConfig);
@@ -477,6 +478,20 @@ window.Nav = Nav;
 
 /* ---------------------------------------------------------------------
    1. AUTH  — Google + Phone OTP, both required
+
+   IMPORTANT FIX: phone OTP must be LINKED to the already-signed-in Google
+   user via linkWithCredential(), not confirmed via confirmationResult.confirm().
+   confirm() calls signInWithCredential() under the hood, which SWITCHES
+   auth.currentUser to a brand new phone-only account with a DIFFERENT uid.
+   That left State.firebaseUser (still holding the old Google user object)
+   out of sync with the real request.auth.uid Firestore sees on the wire —
+   so every write to /users/{googleUid} failed isOwner() and threw
+   "permission-denied: Missing or insufficient permissions." Retrying just
+   re-ran the same mismatched write, which is why spamming Retry sometimes
+   "worked": it wasn't fixing anything, it was masking the race by tolerating
+   a decent chunk of failed provisioning writes until something happened to
+   land right. linkWithCredential keeps the same uid throughout, so this
+   should now succeed on the first try.
 --------------------------------------------------------------------- */
 const Auth = {
   async signInWithGoogle() {
@@ -530,6 +545,10 @@ const Auth = {
   },
 
   async sendOtp() {
+    if (!auth.currentUser) {
+      toast("Sign in with Google first");
+      return;
+    }
     const phone = document.getElementById("phoneInput").value.trim();
     if (!phone.startsWith("+")) {
       toast("Include country code, e.g. +91XXXXXXXXXX");
@@ -550,15 +569,30 @@ const Auth = {
     const code = document.getElementById("otpInput").value.trim();
     if (!State.confirmationResult) return;
     try {
-      // Note: linking phone credential to the already-Google-signed-in user in production
-      // would use linkWithCredential; for MVP simplicity we just confirm the OTP itself
-      // as proof of phone ownership and record the phone number on the profile doc.
-      const result = await State.confirmationResult.confirm(code);
+      // Build the phone credential ourselves and LINK it to the current
+      // (Google) user instead of calling confirmationResult.confirm(),
+      // which would sign in as a separate phone-only user and swap out
+      // auth.currentUser's uid from under us.
+      const credential = PhoneAuthProvider.credential(
+        State.confirmationResult.verificationId, code
+      );
+      const result = await linkWithCredential(auth.currentUser, credential);
+      State.firebaseUser = result.user; // same uid as before, phone now linked
       State.phoneVerified = true;
       document.getElementById("phoneStatus").textContent = "Verified: " + (result.user.phoneNumber || phoneInput.value);
       document.getElementById("phoneStatus").style.color = "var(--good)";
       Auth._checkBothDone();
     } catch (e) {
+      if (e.code === "auth/credential-already-in-use" || e.code === "auth/provider-already-linked") {
+        // This phone number (or a phone credential) is already linked/used —
+        // treat as verified for this session rather than blocking the user.
+        State.phoneVerified = true;
+        State.firebaseUser = auth.currentUser;
+        document.getElementById("phoneStatus").textContent = "Verified";
+        document.getElementById("phoneStatus").style.color = "var(--good)";
+        Auth._checkBothDone();
+        return;
+      }
       document.getElementById("loginError").textContent = "Invalid OTP: " + e.message;
     }
   },
@@ -654,7 +688,7 @@ const App = {
     const userData = {
       uid,
       email: State.firebaseUser.email || null,
-      phone: (State.confirmationResult && State.confirmationResult.verificationId) ? (document.getElementById("phoneInput").value.trim()) : null,
+      phone: State.firebaseUser.phoneNumber || (document.getElementById("phoneInput").value.trim() || null),
       displayName: State.firebaseUser.displayName || "User " + paddedId,
       mockUpiId: upiId,
       mockBankId: bankId,
