@@ -517,7 +517,10 @@ const State = {
   faceStream: null,
   lastRawModelOutputs: null,
   pinCallback: null,
-  debugOverrides: {}
+  // Persisted to localStorage so they survive a page refresh/reload — they
+  // only get wiped when you explicitly hit "Clear Overrides" in the Debug
+  // panel, not by accident on the next reload.
+  debugOverrides: JSON.parse(localStorage.getItem("bguard_debug_overrides") || "{}")
 };
 
 /* ---------------------------------------------------------------------
@@ -900,6 +903,7 @@ const Dashboard = {
     document.getElementById("dashBankName").textContent = State.userDoc.mockBankName;
     document.getElementById("dashBalance").textContent = "₹" + State.accountDoc.balance.toLocaleString("en-IN");
     document.getElementById("dashUpi").textContent = State.userDoc.mockUpiId;
+    Dashboard._renderDebugBanner();
 
     const uid = State.firebaseUser.uid;
     const box = document.getElementById("dashRecentTxns");
@@ -942,6 +946,25 @@ const Dashboard = {
     const cleanMsg = msg.replace(/https:\/\/console\.firebase\.google\.com\S+/, "").trim();
     return `<p class="muted" style="color:var(--bad);">Couldn't load transactions: ${cleanMsg}</p>` +
       (linkMatch ? `<p class="muted"><a href="${linkMatch[0]}" target="_blank" rel="noopener">Create the required Firestore index →</a></p>` : "");
+  },
+  // Shows a small persistent banner on the dashboard whenever debug overrides
+  // are active, so it's obvious even outside the Debug panel that the next
+  // transaction won't be running on real signals.
+  _renderDebugBanner() {
+    const header = document.querySelector("#screen-dashboard .card");
+    if (!header) return;
+    let el = document.getElementById("dashDebugBanner");
+    const o = State.debugOverrides || {};
+    const active = !!(o.deviceId || o.gps || o.simAnomaly || o.otpMismatch);
+    if (!active) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "dashDebugBanner";
+      el.style.cssText = "background:var(--bad-bg);color:var(--bad);border-radius:var(--radius-sm);padding:10px 14px;font-size:12.5px;font-weight:600;margin-bottom:14px;cursor:pointer;";
+      el.onclick = () => Nav.go("debug");
+      header.parentNode.insertBefore(el, header);
+    }
+    el.textContent = "⚠ Debug overrides ACTIVE — tap to review/clear (next txn uses fake signals)";
   }
 };
 
@@ -1803,6 +1826,32 @@ const Debug = {
     if (!DEBUG_MODE) { toast("Debug mode disabled in this build"); Nav.go("dashboard"); return; }
     document.getElementById("dbgRawOutputs").textContent =
       State.lastRawModelOutputs ? JSON.stringify(State.lastRawModelOutputs, null, 2) : "No inference run yet.";
+    // Re-populate the form from whatever overrides are currently active
+    // (persisted across reloads) so it's obvious at a glance what's live —
+    // instead of always showing blank fields even when overrides are on.
+    const o = State.debugOverrides || {};
+    document.getElementById("dbgDeviceId").value = o.deviceId || "";
+    document.getElementById("dbgGps").value = o.gps || "";
+    document.getElementById("dbgSimAnomaly").checked = !!o.simAnomaly;
+    document.getElementById("dbgOtpMismatch").checked = !!o.otpMismatch;
+    this._renderActiveBanner(o);
+  },
+  _renderActiveBanner(o) {
+    const active = !!(o.deviceId || o.gps || o.simAnomaly || o.otpMismatch);
+    let el = document.getElementById("dbgActiveBanner");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "dbgActiveBanner";
+      el.style.cssText = "font-size:12.5px;font-weight:600;margin:0 0 10px;";
+      document.getElementById("screen-debug").insertBefore(el, document.getElementById("screen-debug").children[1]);
+    }
+    if (active) {
+      el.textContent = "⚠ Overrides are currently ACTIVE — every transaction (any screen, any recipient) will use these until you press Clear Overrides.";
+      el.style.color = "var(--bad)";
+    } else {
+      el.textContent = "No overrides active — transactions run on real signals.";
+      el.style.color = "var(--muted)";
+    }
   },
   apply() {
     State.debugOverrides = {
@@ -1811,14 +1860,18 @@ const Debug = {
       simAnomaly: document.getElementById("dbgSimAnomaly").checked,
       otpMismatch: document.getElementById("dbgOtpMismatch").checked
     };
-    toast("Debug overrides applied");
+    localStorage.setItem("bguard_debug_overrides", JSON.stringify(State.debugOverrides));
+    this._renderActiveBanner(State.debugOverrides);
+    toast("Debug overrides applied — persists across reloads until cleared");
   },
   clear() {
     State.debugOverrides = {};
+    localStorage.removeItem("bguard_debug_overrides");
     document.getElementById("dbgDeviceId").value = "";
     document.getElementById("dbgGps").value = "";
     document.getElementById("dbgSimAnomaly").checked = false;
     document.getElementById("dbgOtpMismatch").checked = false;
+    this._renderActiveBanner({});
     toast("Debug overrides cleared");
   },
   overrideDeviceId() { return DEBUG_MODE ? State.debugOverrides.deviceId : null; },
