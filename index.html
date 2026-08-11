@@ -913,12 +913,15 @@ const Dashboard = {
         .slice(0, 5);
 
       if (all.length === 0) { box.innerHTML = '<p class="muted">No transactions yet.</p>'; return; }
+      // Feed the same cache History.openDetail() reads from, so the
+      // breakdown popup works no matter which screen the txn was clicked from.
+      Object.assign(History._cache, Object.fromEntries(all.map(t => [t.id, t])));
       box.innerHTML = all.map(t => {
         const outgoing = t.senderUid === uid;
         const fusedPct = t.fraudBreakdown?.fused != null ? (t.fraudBreakdown.fused * 100).toFixed(0) + "%" : "-";
         return `<div class="txn-item">
           <div>${outgoing ? "To" : "From"} ${outgoing ? t.receiverUpiId : t.senderUpiId}
-            <div class="muted" style="font-size:12px;">${t.category || ""} · <span class="tag tag-${t.riskTier}">${t.riskTier} · ${fusedPct}</span></div>
+            <div class="muted" style="font-size:12px;">${t.category || ""} · <span class="tag tag-${t.riskTier}" style="cursor:pointer" onclick="History.openDetail('${t.id}')">${t.riskTier} · ${fusedPct}</span></div>
           </div>
           <div>${outgoing ? "-" : "+"}₹${t.amount}</div>
         </div>`;
@@ -1659,19 +1662,25 @@ const History = {
     const t = this._cache[id];
     if (!t) return;
     const b = t.fraudBreakdown || {};
+    const pct = v => v == null ? "-" : (v * 100).toFixed(1) + "%";
+    const ctxTotal = b.ctx?.score ?? ((b.ctx?.s1 ?? 0) + (b.ctx?.s2 ?? 0) + (b.ctx?.s3 ?? 0) + (b.ctx?.s4 ?? 0));
     document.getElementById("txnDetailBody").innerHTML = `
       <p><strong>${t.status}</strong> · <span class="tag tag-${t.riskTier}">${t.riskTier}</span></p>
       <p class="muted">₹${t.amount} · ${t.category || ""}</p>
       <hr style="border-color:#232744;">
-      <div class="score-row"><span>P(A) Transaction Pattern</span><span>${(b.pA ?? 0).toFixed(3)}</span></div>
-      <div class="score-row"><span>P(B) Verification/Device</span><span>${(b.pB ?? 0).toFixed(3)}</span></div>
-      <div class="score-row"><span>P(C) Behavioral Deviation</span><span>${(b.pC ?? 0).toFixed(3)}</span></div>
-      <div class="score-row"><span>CTX S1 (device)</span><span>${b.ctx?.s1 ?? "-"}</span></div>
-      <div class="score-row"><span>CTX S2 (location)</span><span>${b.ctx?.s2 ?? "-"}</span></div>
-      <div class="score-row"><span>CTX S3 (SIM anomaly)</span><span>${b.ctx?.s3 ?? "-"}</span></div>
-      <div class="score-row"><span>CTX S4 (OTP device match)</span><span>${b.ctx?.s4 ?? "-"}</span></div>
+      <h2 style="font-size:14px;color:var(--muted);margin:0 0 8px;">Model scores</h2>
+      <div class="score-row"><span>P(A) Transaction Pattern</span><span>${pct(b.pA)} <span class="muted" style="font-weight:400;">(${(b.pA ?? 0).toFixed(3)})</span></span></div>
+      <div class="score-row"><span>P(B) Verification/Device</span><span>${pct(b.pB)} <span class="muted" style="font-weight:400;">(${(b.pB ?? 0).toFixed(3)})</span></span></div>
+      <div class="score-row"><span>P(C) Behavioral Deviation</span><span>${pct(b.pC)} <span class="muted" style="font-weight:400;">(${(b.pC ?? 0).toFixed(3)})</span></span></div>
+      <h2 style="font-size:14px;color:var(--muted);margin:16px 0 8px;">Context (CTX) layers</h2>
+      <div class="score-row"><span>S1 — Unknown device</span><span>${b.ctx?.s1 ?? "-"}</span></div>
+      <div class="score-row"><span>S2 — Unusual location</span><span>${b.ctx?.s2 ?? "-"}</span></div>
+      <div class="score-row"><span>S3 — SIM anomaly</span><span>${b.ctx?.s3 ?? "-"}</span></div>
+      <div class="score-row"><span>S4 — OTP device mismatch</span><span>${b.ctx?.s4 ?? "-"}</span></div>
+      <div class="score-row"><span>CTX total</span><span>${ctxTotal}/4</span></div>
       <hr style="border-color:#232744;">
-      <div class="score-row"><strong>Fused Score</strong><strong>${(b.fused ?? 0).toFixed(3)}</strong></div>
+      <div class="score-row"><strong>Fraud Risk Score (fused)</strong><strong>${pct(b.fused)}</strong></div>
+      <div class="score-row"><span class="muted">Raw fused value</span><span class="muted">${(b.fused ?? 0).toFixed(3)}</span></div>
     `;
     Nav.go("txn-detail");
   }
